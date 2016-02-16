@@ -1,0 +1,70 @@
+#cloud-config
+
+hostname: __HOSTNAME__
+
+coreos:
+  etcd2:
+    name: __HOSTNAME__
+    proxy: on
+    listen-client-urls: http://127.0.0.1:2379
+    initial-cluster: __INITIAL_CLUSTER__
+  units:
+    - name: etcd2.service
+      command: start
+    - name: docker-tcp.socket
+      command: start
+      enable: true
+      content: |
+        [Unit]
+        Description=Docker Socket for the API
+
+        [Socket]
+        ListenStream=2375
+        BindIPv6Only=both
+        Service=docker.service
+
+        [Install]
+        WantedBy=sockets.target
+    - name: docker.service
+      command: start
+    - name: swarm-agent.service
+      command: start
+      content: |
+        [Unit]
+        Description=Docker Swarm Agent Container
+        After=docker.service
+        Requires=docker.service
+
+        [Service]
+        ExecStartPre=-/usr/bin/docker pull swarm
+        ExecStart=/usr/bin/docker run \
+                              --detach \
+                              --name swarm-agent \
+                              --net=host \
+              swarm join \
+                        --addr=$public_ipv4:2375 \
+                        etcd://127.0.0.1:2379
+
+        [Install]
+        WantedBy=multi-user.target
+    - name: swarm-master.service
+      command: start
+      content: |
+        [Unit]
+        Description=Docker Swarm Master Container
+        After=swarm-agent.service
+        Requires=swarm-agent.service
+
+        [Service]
+        ExecStartPre=-/usr/bin/docker pull swarm
+        ExecStart=/usr/bin/docker run \
+                              --detach \
+                              --name swarm-master \
+                              --net=host \
+                              --publish 3375:3375 \
+              swarm manage \
+                        -H :3375 \
+                        etcd://127.0.0.1:2379
+
+        [Install]
+        WantedBy=multi-user.target
